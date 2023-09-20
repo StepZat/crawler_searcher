@@ -1,3 +1,6 @@
+import re
+
+import bs4
 import requests
 import urllib.parse
 from bs4 import BeautifulSoup
@@ -17,12 +20,21 @@ class Crawler:
         pass
 
     # 2. Получение текста страницы
-    def getTextOnly(self, text):
-        return ""
+    def getTextOnly(self, soup, wiki_flag):
+        if wiki_flag:
+            useful = soup.find("div", {"id": "bodyContent"})
+            for item in useful.find_all("span", {"class": "mw-editsection"}):
+                item.decompose()
+            text = useful.get_text().replace('\n', ' ')
+        else:
+            useful = soup.find('body')
+            text = useful.get_text().replace('\n', ' ')
+        return text
 
     # 3. Разбиение текста на слова
     def separateWords(self, text):
-        return ""
+        words = re.sub(r"[,.;@#?!&$()\-—]+\ *", " ", text).split()
+        return words
 
     # 4. Проиндексирован ли URL (проверка наличия URL в БД)
     def isIndexed(self, url):
@@ -32,10 +44,25 @@ class Crawler:
     def addLinkRef(self, urlFrom, urlTo, linkText):
         pass
 
-    # 6. Непосредственно сам метод сбора данных.
-    # Начиная с заданного списка страниц, выполняет поиск в ширину
-    # до заданной глубины, индексируя все встречающиеся по пути страницы
-    def crawl(self, urlList, maxDepth=1):
+    def crawl(self, urlList, maxDepth=3):
+        wiki_pattern = "https?://([0-9a-z]+[.])wikipedia[.]org/.*"
+        wiki_flag = False
+        for currDepth in range(0, maxDepth):
+            for url in urlList:
+                if re.fullmatch(wiki_pattern, url) is not None:
+                    wiki_flag = True
+                response = requests.get(url)
+                if response.status_code == 200:
+                    html_text = response.text
+                    soup = bs4.BeautifulSoup(html_text, features="html.parser")
+                    clear_text = self.getTextOnly(soup, wiki_flag)
+                    clear_words = self.separateWords(clear_text)
+                    for word_id, word in enumerate(clear_words):
+                        isFiltered = word.isnumeric()
+                        cursor = self.dbConnection.cursor()
+                        query = f"INSERT INTO wordlist (word, isfiltered) values ({word},{isFiltered})"
+                        cursor.execute(query)
+
         pass
 
     # 7. Инициализация таблиц в БД
@@ -83,4 +110,3 @@ class Crawler:
     # добавления записи, если такой еще нет
     def getEntryId(self, tableName, fieldName, value):
         return 1
-

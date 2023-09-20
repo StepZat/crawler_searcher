@@ -6,23 +6,24 @@ import urllib.parse
 import bs4
 from Crawler import Crawler
 
+if __name__ == "__main__":
+    connection = psycopg2.connect(host='192.168.56.101', database='labIS', user='tester', password='tester')
+    spider = Crawler(connection)
+    spider.initDB(spider.dbConnection)
+    urlList = ["https://ru.wikipedia.org/"]
+    spider.crawl(urlList,1)
 
-#if __name__ == "__main__":
-#    connection = psycopg2.connect(host='192.168.2.72', database='labIS', user='tester', password='tester')
-#    spider = Crawler(connection)
-#    spider.initDB(spider.dbConnection)
-
-base_url = 'https://ru.wikipedia.org/wiki/Аэропорт'
-# begin_url = 'https://ru.wikipedia.org'
-html_doc = requests.get(base_url)
-soup = bs4.BeautifulSoup(html_doc.text, features="html.parser")
-useful = soup.find("div",{"id":"bodyContent"})
-for item in useful.find_all("span", {"class": "mw-editsection"}):
-    item.decompose()
-text = useful.get_text().replace('\n', ' ')
-text = re.sub(r"[,.;@#?!&$()\-—]+\ *", " ", text).split()
-print(text)
-#for word in text:
+# base_url = 'https://ru.wikipedia.org/wiki/Аэропорт'
+# # begin_url = 'https://ru.wikipedia.org'
+# html_doc = requests.get(base_url)
+# soup = bs4.BeautifulSoup(html_doc.text, features="html.parser")
+# useful = soup.find("div",{"id":"bodyContent"})
+# for item in useful.find_all("span", {"class": "mw-editsection"}):
+#     item.decompose()
+# text = useful.get_text().replace('\n', ' ')
+# text = re.sub(r"[,.;@#?!&$()\-—]+\ *", " ", text).split()
+# print(text)
+# for word in text:
 #    print(word)
 # for a in useful.find_all('a', href=True):
 #     clearurl = ''
