@@ -10,8 +10,9 @@ if __name__ == "__main__":
     connection = psycopg2.connect(host='192.168.56.101', database='labIS', user='tester', password='tester')
     spider = Crawler(connection)
     spider.initDB(spider.dbConnection)
-    urlList = ["https://ru.wikipedia.org/"]
+    urlList = ["https://ru.wikipedia.org/wiki/Аэропорт"]
     spider.crawl(urlList,1)
+    print(spider.getUrls(urlList[0]))
 
 # base_url = 'https://ru.wikipedia.org/wiki/Аэропорт'
 # # begin_url = 'https://ru.wikipedia.org'
