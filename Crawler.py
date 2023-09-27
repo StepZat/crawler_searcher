@@ -18,8 +18,42 @@ class Crawler:
         pass
 
     # 1. Индексирование одной страницы
-    def addIndex(self, soup, url):
-        pass
+    def addIndex(self, url, wiki_pattern):
+        query_addurl = f"insert into urllist (url) values ('{url}')"
+        self.cursor.execute(query_addurl)
+        self.dbConnection.commit()
+        if re.fullmatch(wiki_pattern, url) is not None:
+            wiki_flag = True
+        response = requests.get(url)
+        html_text = response.text
+        soup = bs4.BeautifulSoup(html_text, features="html.parser")
+        clear_text = self.getTextOnly(soup, wiki_flag)
+        clear_words = self.separateWords(clear_text)
+        for word in clear_words:
+            isFiltered = word.isnumeric()
+            query = """
+                    DO 
+                    $do$
+                    BEGIN
+                        IF NOT EXISTS (select word from wordlist where word = %s) THEN
+                            INSERT into wordlist (word, isFiltered) values (%s, %s);
+                        END IF;
+                    END;
+                    $do$
+                    """
+            self.cursor.execute(query, (word, word, isFiltered))
+        self.dbConnection.commit()
+        for word_id, word in enumerate(clear_words):
+            query = """
+                    insert into wordlocation (fk_wordid, fk_urlid, location)
+                    values (
+                               (select rowid from wordlist where word = %s),
+                               (select rowid from urllist where url = %s),
+                               %s        
+                    )
+                    """
+            self.cursor.execute(query, (word, url, word_id))
+        self.dbConnection.commit()
 
     # 2. Получение текста страницы
     def getTextOnly(self, soup, wiki_flag):
@@ -31,10 +65,10 @@ class Crawler:
                 item.decompose()
             for item in useful.find_all('div', {'class': 'catlinks'}):
                 item.decompose()
-            text = useful.get_text().replace('\n', ' ')
+            text = useful.get_text(" ").replace('\n', ' ')
         else:
             useful = soup.find('body')
-            text = useful.get_text().replace('\n', ' ')
+            text = useful.get_text(" ").replace('\n', ' ')
         return text
 
     # 3. Разбиение текста на слова
@@ -43,12 +77,16 @@ class Crawler:
         words_clear = []
         for s in words:
             name = re.sub(r'\[[^][]*\]', '', s)
-            words_clear.append(name)
+            if name != '':
+                words_clear.append(name)
         return words_clear
 
     # 4. Проиндексирован ли URL (проверка наличия URL в БД)
     def isIndexed(self, url) -> bool:
-        return False
+        query = f"select exists(select 1 from urllist where url = '{url}')"
+        self.cursor.execute(query, url)
+        result = self.cursor.fetchone()
+        return result[0]
 
     # 5. Добавление ссылки с одной страницы на другую
     def addLinkRef(self, urlFrom, urlTo, linkText):
@@ -99,32 +137,11 @@ class Crawler:
         wiki_flag = False
         for currDepth in range(0, maxDepth):
             for url in urlList:
-                if re.fullmatch(wiki_pattern, url) is not None:
-                    wiki_flag = True
-                response = requests.get(url)
-                if response.status_code == 200:
-                    html_text = response.text
-                    soup = bs4.BeautifulSoup(html_text, features="html.parser")
-                    clear_text = self.getTextOnly(soup, wiki_flag)
-                    clear_words = self.separateWords(clear_text)
-                    for word_id, word in enumerate(clear_words):
-                        isFiltered = word.isnumeric()
-                        query = """
-                                DO 
-                                $do$
-                                BEGIN
-                                    IF NOT EXISTS (select word from wordlist where word = %s) THEN
-                                        INSERT into wordlist (word, isFiltered) values (%s, %s);
-                                    END IF;
-                                END;
-                                $do$
-                                """
-                        self.cursor.execute(query, (word, word,  isFiltered))
-                    # query = "INSERT INTO urllist (url) values (%s)"
-                    # self.cursor.execute(query, url)
-                    self.dbConnection.commit()
-
-        pass
+                if self.isIndexed(url):
+                    return
+                else:
+                    if requests.get(url).status_code == 200:
+                        self.addIndex(url, wiki_pattern)
 
     # 7. Инициализация таблиц в БД
     def initDB(self, conn):
