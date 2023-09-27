@@ -1,10 +1,8 @@
 import re
-
 import bs4
 import psycopg2
 import requests
 import urllib.parse
-from bs4 import BeautifulSoup
 
 
 class Crawler:
@@ -18,7 +16,7 @@ class Crawler:
         pass
 
     # 1. Индексирование одной страницы
-    def addIndex(self, url, wiki_pattern):
+    def addIndex(self, url, wiki_pattern) -> None:
         query_addurl = f"insert into urllist (url) values ('{url}')"
         self.cursor.execute(query_addurl)
         self.dbConnection.commit()
@@ -133,15 +131,30 @@ class Crawler:
         return newUrls
 
     def crawl(self, urlList, maxDepth=3):
+        parentURL = None
         wiki_pattern = "https?://([0-9a-z]+[.])wikipedia[.]org/.*"
         wiki_flag = False
         for currDepth in range(0, maxDepth):
-            for url in urlList:
-                if self.isIndexed(url):
-                    return
-                else:
-                    if requests.get(url).status_code == 200:
-                        self.addIndex(url, wiki_pattern)
+            if parentURL is None:
+                for url in urlList:
+                    if self.isIndexed(url):
+                        continue
+                    else:
+                        if requests.get(url).status_code == 200:
+                            self.addIndex(url, wiki_pattern)
+                parentURL = urlList
+            else:
+                tempURL = []
+                for p_url in parentURL:
+                    urlList = self.getUrls(p_url)
+                    tempURL += urlList
+                    for url in urlList:
+                        if self.isIndexed(url):
+                            continue
+                        else:
+                            if requests.get(url).status_code == 200:
+                                self.addIndex(url, wiki_pattern)
+                parentURL = tempURL
 
     # 7. Инициализация таблиц в БД
     def initDB(self, conn):
