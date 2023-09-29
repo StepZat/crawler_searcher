@@ -16,11 +16,12 @@ class Crawler:
         pass
 
     # 1. Индексирование одной страницы
-    def addIndex(self, url, wiki_pattern) -> None:
+    def addIndex(self, parent_url, url, wiki_pattern) -> None:
         domain = urllib.parse.urlparse(url).netloc
         query_addurl = f"insert into urllist (url, domain) values ('{url}','{domain}')"
         self.cursor.execute(query_addurl)
         self.dbConnection.commit()
+        self.addLinkRef(parent_url, url)
         if re.fullmatch(wiki_pattern, url) is not None:
             wiki_flag = True
         else:
@@ -55,10 +56,16 @@ class Crawler:
                         )
                         """
                 self.cursor.execute(query, (word, url, word_id))
+                query_linkword = ("insert into linkword(fk_wordid, fk_linkid) VALUES ("
+                                  "(select rowid from wordlist where word = %s),"
+                                  "(select lb.rowid from linkbetweenurl lb " 
+                                  "inner join urllist ul on ul.url = %s "
+                                  "where lb.fk_tourl_id = ul.rowid))")
+                self.cursor.execute(query_linkword, (word, url))
             self.dbConnection.commit()
 
     # 2. Получение текста страницы
-    def getTextOnly(self, soup, wiki_flag):
+    def getTextOnly(self, soup, wiki_flag) -> str:
         if wiki_flag:
             useful = soup.find("div", {"id": "bodyContent"})
             for item in useful.find_all("span", {"class": "mw-editsection"}):
@@ -92,7 +99,7 @@ class Crawler:
 
     # 5. Добавление ссылки с одной страницы на другую
     def addLinkRef(self, urlFrom, urlTo):
-        if urlFrom == None:
+        if urlFrom is None:
             query = f"insert into linkbetweenurl (fk_tourl_id) values ((select rowid from urllist where url = '{urlTo}'))"
             self.cursor.execute(query)
         else:
@@ -160,8 +167,7 @@ class Crawler:
                         continue
                     else:
                         if requests.get(url).status_code == 200 and requests.get(url).headers['content-type'].startswith('text/html'):
-                            self.addIndex(url, wiki_pattern)
-                            self.addLinkRef(None, url)
+                            self.addIndex(None, url, wiki_pattern)
                 parentURL = urlList
             else:
                 tempURL = []
@@ -173,8 +179,7 @@ class Crawler:
                             continue
                         else:
                             if requests.get(url).status_code == 200 and requests.get(url).headers['content-type'].startswith('text/html'):
-                                self.addIndex(url, wiki_pattern)
-                                self.addLinkRef(p_url, url)
+                                self.addIndex(p_url, url, wiki_pattern)
                 parentURL = tempURL
 
     # 7. Инициализация таблиц в БД
@@ -217,8 +222,3 @@ class Crawler:
         cursor.execute(create_linkWord_query)
         conn.commit()
         print("DB structure created successfully!")
-
-    # 8. Вспомогательная функция для получения идентификатора и
-    # добавления записи, если такой еще нет
-    def getEntryId(self, tableName, fieldName, value):
-        return 1
