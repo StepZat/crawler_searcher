@@ -17,41 +17,45 @@ class Crawler:
 
     # 1. Индексирование одной страницы
     def addIndex(self, url, wiki_pattern) -> None:
-        query_addurl = f"insert into urllist (url) values ('{url}')"
+        domain = urllib.parse.urlparse(url).netloc
+        query_addurl = f"insert into urllist (url, domain) values ('{url}','{domain}')"
         self.cursor.execute(query_addurl)
         self.dbConnection.commit()
         if re.fullmatch(wiki_pattern, url) is not None:
             wiki_flag = True
+        else:
+            wiki_flag = False
         response = requests.get(url)
         html_text = response.text
         soup = bs4.BeautifulSoup(html_text, features="html.parser")
-        clear_text = self.getTextOnly(soup, wiki_flag)
-        clear_words = self.separateWords(clear_text)
-        for word in clear_words:
-            isFiltered = word.isnumeric()
-            query = """
-                    DO 
-                    $do$
-                    BEGIN
-                        IF NOT EXISTS (select word from wordlist where word = %s) THEN
-                            INSERT into wordlist (word, isFiltered) values (%s, %s);
-                        END IF;
-                    END;
-                    $do$
-                    """
-            self.cursor.execute(query, (word, word, isFiltered))
-        self.dbConnection.commit()
-        for word_id, word in enumerate(clear_words):
-            query = """
-                    insert into wordlocation (fk_wordid, fk_urlid, location)
-                    values (
-                               (select rowid from wordlist where word = %s),
-                               (select rowid from urllist where url = %s),
-                               %s        
-                    )
-                    """
-            self.cursor.execute(query, (word, url, word_id))
-        self.dbConnection.commit()
+        if soup.find('body') is not None:
+            clear_text = self.getTextOnly(soup, wiki_flag)
+            clear_words = self.separateWords(clear_text)
+            for word in clear_words:
+                isFiltered = word.isnumeric()
+                query = """
+                        DO 
+                        $do$
+                        BEGIN
+                            IF NOT EXISTS (select word from wordlist where word = %s) THEN
+                                INSERT into wordlist (word, isFiltered) values (%s, %s);
+                            END IF;
+                        END;
+                        $do$
+                        """
+                self.cursor.execute(query, (word, word, isFiltered))
+            self.dbConnection.commit()
+            for word_id, word in enumerate(clear_words):
+                query = """
+                        insert into wordlocation (fk_wordid, fk_urlid, location)
+                        values (
+                                   (select rowid from wordlist where word = %s),
+                                   (select rowid from urllist where url = %s),
+                                   %s        
+                        )
+                        """
+                self.cursor.execute(query, (word, url, word_id))
+            self.dbConnection.commit()
 
     # 2. Получение текста страницы
     def getTextOnly(self, soup, wiki_flag):
@@ -87,8 +91,19 @@ class Crawler:
         return result[0]
 
     # 5. Добавление ссылки с одной страницы на другую
-    def addLinkRef(self, urlFrom, urlTo, linkText):
-        pass
+    def addLinkRef(self, urlFrom, urlTo):
+        if urlFrom == None:
+            query = f"insert into linkbetweenurl (fk_tourl_id) values ((select rowid from urllist where url = '{urlTo}'))"
+            self.cursor.execute(query)
+        else:
+            query = """
+                    insert into linkbetweenurl (fk_fromurl_id, fk_tourl_id)
+                    values (
+                    (select rowid from urllist where url = %s),
+                    (select rowid from urllist where url = %s))
+                    """
+            self.cursor.execute(query, (urlFrom, urlTo))
+        self.dbConnection.commit()
 
     def getUrls(self, url) -> list:
         newUrls = []
@@ -127,7 +142,11 @@ class Crawler:
             soup = bs4.BeautifulSoup(html_doc.text, features="html.parser")
             useful = soup.body
             for a in useful.find_all('a', href=True):
-                newUrls.append(urllib.parse.unquote(a))
+                if urllib.parse.unquote(a['href']).startswith('/'):
+                    domain = urllib.parse.urlparse(url).netloc
+                    newUrls.append("https://" + domain + urllib.parse.unquote(a['href']))
+                elif urllib.parse.unquote(a['href']).startswith('http'):
+                    newUrls.append(urllib.parse.unquote(a['href']))
         return newUrls
 
     def crawl(self, urlList, maxDepth=3):
@@ -140,8 +159,9 @@ class Crawler:
                     if self.isIndexed(url):
                         continue
                     else:
-                        if requests.get(url).status_code == 200:
+                        if requests.get(url).status_code == 200 and requests.get(url).headers['content-type'].startswith('text/html'):
                             self.addIndex(url, wiki_pattern)
+                            self.addLinkRef(None, url)
                 parentURL = urlList
             else:
                 tempURL = []
@@ -152,8 +172,9 @@ class Crawler:
                         if self.isIndexed(url):
                             continue
                         else:
-                            if requests.get(url).status_code == 200:
+                            if requests.get(url).status_code == 200 and requests.get(url).headers['content-type'].startswith('text/html'):
                                 self.addIndex(url, wiki_pattern)
+                                self.addLinkRef(p_url, url)
                 parentURL = tempURL
 
     # 7. Инициализация таблиц в БД
@@ -166,7 +187,8 @@ class Crawler:
 
         create_urllist_query = ("CREATE TABLE IF NOT EXISTS urllist ("
                                 "rowID serial PRIMARY KEY,"
-                                "url TEXT)")
+                                "url TEXT,"
+                                "domain TEXT)")
 
         create_wordlocation_query = ("CREATE TABLE IF NOT EXISTS wordlocation ("
                                      "rowID serial PRIMARY KEY,"
