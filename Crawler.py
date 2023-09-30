@@ -3,6 +3,7 @@ import bs4
 import psycopg2
 import requests
 import urllib.parse
+import matplotlib.pyplot as plt
 
 
 class Crawler:
@@ -13,7 +14,6 @@ class Crawler:
 
     def __del__(self):
         print("Деструктор")
-        pass
 
     # 1. Индексирование одной страницы
     def addIndex(self, parent_url, url, wiki_pattern) -> None:
@@ -47,21 +47,22 @@ class Crawler:
                 self.cursor.execute(query, (word, word, isFiltered))
             self.dbConnection.commit()
             for word_id, word in enumerate(clear_words):
-                query = """
-                        insert into wordlocation (fk_wordid, fk_urlid, location)
-                        values (
-                                   (select rowid from wordlist where word = %s),
-                                   (select rowid from urllist where url = %s),
-                                   %s        
-                        )
-                        """
-                self.cursor.execute(query, (word, url, word_id))
-                query_linkword = ("insert into linkword(fk_wordid, fk_linkid) VALUES ("
-                                  "(select rowid from wordlist where word = %s),"
-                                  "(select lb.rowid from linkbetweenurl lb " 
-                                  "inner join urllist ul on ul.url = %s "
-                                  "where lb.fk_tourl_id = ul.rowid))")
-                self.cursor.execute(query_linkword, (word, url))
+                if not word.isnumeric():
+                    query = """
+                            insert into wordlocation (fk_wordid, fk_urlid, location)
+                            values (
+                                       (select rowid from wordlist where word = %s),
+                                       (select rowid from urllist where url = %s),
+                                       %s        
+                            )
+                            """
+                    self.cursor.execute(query, (word, url, word_id))
+                    query_linkword = ("insert into linkword(fk_wordid, fk_linkid) VALUES ("
+                                      "(select rowid from wordlist where word = %s),"
+                                      "(select lb.rowid from linkbetweenurl lb " 
+                                      "inner join urllist ul on ul.url = %s "
+                                      "where lb.fk_tourl_id = ul.rowid))")
+                    self.cursor.execute(query_linkword, (word, url))
             self.dbConnection.commit()
 
     # 2. Получение текста страницы
@@ -81,7 +82,7 @@ class Crawler:
         return text
 
     # 3. Разбиение текста на слова
-    def separateWords(self, text):
+    def separateWords(self, text) -> list:
         words = re.sub(r"[,.;:@#?!&$()\-—]+\ *", " ", text).split()
         words_clear = []
         for s in words:
@@ -168,6 +169,7 @@ class Crawler:
                     else:
                         if requests.get(url).status_code == 200 and requests.get(url).headers['content-type'].startswith('text/html'):
                             self.addIndex(None, url, wiki_pattern)
+                            self.createStatistics()
                 parentURL = urlList
             else:
                 tempURL = []
@@ -180,7 +182,32 @@ class Crawler:
                         else:
                             if requests.get(url).status_code == 200 and requests.get(url).headers['content-type'].startswith('text/html'):
                                 self.addIndex(p_url, url, wiki_pattern)
+                                self.createStatistics()
                 parentURL = tempURL
+
+    def createStatistics(self):
+        query_words = "SELECT COUNT(*) FROM wordlist"
+        self.cursor.execute(query_words)
+        words_amount = self.cursor.fetchone()[0]
+        query_urls = "SELECT COUNT(*) FROM urllist"
+        self.cursor.execute(query_urls)
+        urls_amount = self.cursor.fetchone()[0]
+        query_statistics = f"INSERT INTO statistics values ({words_amount}, {urls_amount})"
+        self.cursor.execute(query_statistics)
+        self.dbConnection.commit()
+
+    def createGraphs(self):
+        query_words = "SELECT words_amount FROM statistics"
+        self.cursor.execute(query_words)
+        words = self.cursor.fetchall()
+        query_urls = "SELECT urls_amount FROM statistics"
+        self.cursor.execute(query_urls)
+        urls = self.cursor.fetchall()
+        plt.plot(urls, words)
+        plt.title("Зависимость количества слов wordlist от количества url")
+        plt.xlabel("Количество URL")
+        plt.ylabel("Количество уникальных слов")
+        plt.show()
 
     # 7. Инициализация таблиц в БД
     def initDB(self, conn):
@@ -211,7 +238,11 @@ class Crawler:
                                  "fk_wordID integer REFERENCES wordlist (rowid),"
                                  "fk_linkID integer REFERENCES linkbetweenurl (rowid))")
 
-        tables = ["wordlist", "urllist", "wordlocation", "linkbetweenURL", "linkWord"]
+        create_statistics_query = ("CREATE TABLE IF NOT EXISTS statistics ("
+                                   "words_amount integer,"
+                                   "urls_amount integer)")
+        create_statistics_basis = "INSERT INTO statistics values (0, 0)"
+        tables = ["wordlist", "urllist", "wordlocation", "linkbetweenURL", "linkWord", "statistics"]
         cursor = conn.cursor()
         for item in tables:
             cursor.execute(f"DROP TABLE IF EXISTS {item} CASCADE ")
@@ -220,5 +251,7 @@ class Crawler:
         cursor.execute(create_wordlocation_query)
         cursor.execute(create_linkbetweenurl_query)
         cursor.execute(create_linkWord_query)
+        cursor.execute(create_statistics_query)
+        cursor.execute(create_statistics_basis)
         conn.commit()
         print("DB structure created successfully!")
