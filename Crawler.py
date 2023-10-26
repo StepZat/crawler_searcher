@@ -18,8 +18,8 @@ class Crawler:
     # 1. Индексирование одной страницы
     def addIndex(self, parent_url, url, wiki_pattern) -> None:
         domain = urllib.parse.urlparse(url).netloc
-        query_addurl = f"insert into urllist (url, domain) values ('{url}','{domain}')"
-        self.cursor.execute(query_addurl)
+        query_addurl = "insert into urllist (url, domain) values (%s, %s)"
+        self.cursor.execute(query_addurl, (url, domain, ))
         self.dbConnection.commit()
         self.addLinkRef(parent_url, url)
         if re.fullmatch(wiki_pattern, url) is not None:
@@ -35,7 +35,7 @@ class Crawler:
             for word in clear_words:
                 isFiltered = word.isnumeric()
                 query = """
-                        DO 
+                        DO
                         $do$
                         BEGIN
                             IF NOT EXISTS (select word from wordlist where word = %s) THEN
@@ -53,13 +53,13 @@ class Crawler:
                             values (
                                        (select rowid from wordlist where word = %s),
                                        (select rowid from urllist where url = %s),
-                                       %s        
+                                       %s
                             )
                             """
                     self.cursor.execute(query, (word, url, word_id))
                     query_linkword = ("insert into linkword(fk_wordid, fk_linkid) VALUES ("
                                       "(select rowid from wordlist where word = %s),"
-                                      "(select lb.rowid from linkbetweenurl lb " 
+                                      "(select lb.rowid from linkbetweenurl lb "
                                       "inner join urllist ul on ul.url = %s "
                                       "where lb.fk_tourl_id = ul.rowid))")
                     self.cursor.execute(query_linkword, (word, url))
@@ -93,16 +93,17 @@ class Crawler:
 
     # 4. Проиндексирован ли URL (проверка наличия URL в БД)
     def isIndexed(self, url) -> bool:
-        query = f"select exists(select 1 from urllist where url = '{url}')"
-        self.cursor.execute(query, url)
+        query = "select exists(select 1 from urllist where url = %s )"
+        self.cursor.execute(query, (url, ))
         result = self.cursor.fetchone()
+        self.dbConnection.commit()
         return result[0]
 
     # 5. Добавление ссылки с одной страницы на другую
     def addLinkRef(self, urlFrom, urlTo):
         if urlFrom is None:
-            query = f"insert into linkbetweenurl (fk_tourl_id) values ((select rowid from urllist where url = '{urlTo}'))"
-            self.cursor.execute(query)
+            query = "insert into linkbetweenurl (fk_tourl_id) values ((select rowid from urllist where url = %s))"
+            self.cursor.execute(query, (urlTo, ))
         else:
             query = """
                     insert into linkbetweenurl (fk_fromurl_id, fk_tourl_id)
@@ -134,7 +135,7 @@ class Crawler:
             for item in useful.find_all("span", {'class': 'mw-cite-backlink'}):
                 item.decompose()
             for a in useful.find_all('a', href=True):
-                if re.search('/w/.*', a['href']) or re.search("index.php*", a['href']):
+                if re.search('/w/.*', a['href']) or re.search("index.php*", a['href']) or re.search("query.wikidata.org*", a['href']):
                     continue
                 elif re.match('/wiki/.*', a['href']):
                     clearurl = begin_url + a['href']
@@ -167,9 +168,14 @@ class Crawler:
                     if self.isIndexed(url):
                         continue
                     else:
-                        if requests.get(url).status_code == 200 and requests.get(url).headers['content-type'].startswith('text/html'):
-                            self.addIndex(None, url, wiki_pattern)
-                            self.createStatistics()
+                        try:
+                            if requests.get(url).status_code == 200 and requests.get(url).headers['content-type'].startswith('text/html'):
+                                self.addIndex(None, url, wiki_pattern)
+                                self.createStatistics()
+                                self.getStatistics()
+                        except:
+                            print(f"URL {url} недоступен")
+
                 parentURL = urlList
             else:
                 tempURL = []
@@ -180,9 +186,14 @@ class Crawler:
                         if self.isIndexed(url):
                             continue
                         else:
-                            if requests.get(url).status_code == 200 and requests.get(url).headers['content-type'].startswith('text/html'):
-                                self.addIndex(p_url, url, wiki_pattern)
-                                self.createStatistics()
+                            try:
+                                if requests.get(url).status_code == 200 and requests.get(url).headers['content-type'].startswith('text/html'):
+                                    self.addIndex(p_url, url, wiki_pattern)
+                                    self.createStatistics()
+                                    self.getStatistics()
+                            except:
+                                print(f"URL {url} недоступен")
+
                 parentURL = tempURL
 
     def createStatistics(self):
@@ -195,6 +206,24 @@ class Crawler:
         query_statistics = f"INSERT INTO statistics values ({words_amount}, {urls_amount})"
         self.cursor.execute(query_statistics)
         self.dbConnection.commit()
+
+    def getStatistics(self):
+        wordlist_q = "SELECT COUNT(*) FROM wordlist"
+        urllist_q = "SELECT COUNT(*) FROM urllist"
+        wordlocation_q = "SELECT COUNT(*) FROM wordlocation"
+        linkword_q = "SELECT COUNT(*) FROM linkword"
+        linkbetweenurl_q = "SELECT COUNT(*) FROM linkbetweenurl"
+        self.cursor.execute(wordlist_q)
+        wordlist = self.cursor.fetchone()[0]
+        self.cursor.execute(urllist_q)
+        urllist = self.cursor.fetchone()[0]
+        self.cursor.execute(wordlocation_q)
+        wordlocation = self.cursor.fetchone()[0]
+        self.cursor.execute(linkword_q)
+        linkword = self.cursor.fetchone()[0]
+        self.cursor.execute(linkbetweenurl_q)
+        linkbetweenurl = self.cursor.fetchone()[0]
+        print(f"Количество записей в таблице wordlist = {wordlist}, urllist - {urllist}, wordlocation - {wordlocation}, linkword - {linkword}, linkbetweenurl - {linkbetweenurl}")
 
     def createGraphs(self):
         query_words = "SELECT words_amount FROM statistics"
