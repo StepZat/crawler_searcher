@@ -80,82 +80,22 @@ class Searcher:
         freqRanks[elem] = len(w0_locs) * len(w1_locs)
         return self.normalizeScores(freqRanks, smallIsBetter=0)
 
-    def getUrlId(self, url_id):
-        self.cursor.execute(f"SELECT url from urllist where rowid = {url_id}")
-        return self.cursor.fetchone()[0]
-
     def getSortedList(self, query):
         rowsLoc, wordsidlist = self.getMatchRows(query)
         rawRank = self.frequencyScore(rowsLoc)
         sortedRank = dict(sorted(rawRank.items(), key=lambda x: x[1], reverse=True))
-        PageRank = self.calculatePageRank()
+        rawPageRank = self.calculatePageRank()
+        sortedPageRank = dict(sorted(rawPageRank.items(), key=lambda x: x[1], reverse=True))
         for item in rowsLoc:
             print(item)
+        usedPageRank = {}
+        meanRank = {}
+        for key in sortedRank:
+            usedPageRank[key] = sortedPageRank[key]
+            meanRank[key] = (sortedRank[key] + sortedPageRank[key]) / 2
         print(sortedRank)
-
-
-    def getData(self, row, calculateRang=True):
-        """точка входа"""
-        if calculateRang:
-            rowLoc, wordsList = self.getMatchRows(row)
-
-            print("-----------------------")
-            print(row)
-            print(wordsList)
-            for location in rowLoc:
-                print(location)
-
-            method1 = self.frequencyScore(rowLoc)
-            print(method1)
-            method2 = self.calculatePageRank()
-            rezult = dict()
-
-            for (key, value) in method1.items():
-                print(method2[key])
-                tmp = (value + method2[key]) / 2
-                rezult[key] = value
-
-            urlDict = dict()
-
-            for (key, value) in rezult.items():
-                urlList = self.cursor.execute("""SELECT url from URLList WHERE rowid = :value""",
-                                            {"value": key}).fetchall()
-                url = urlList[0][0]
-                urlDict[url] = value
-
-            return dict(sorted(urlDict.items(), key=lambda item: item[1]))
-
-        else:
-
-            rowLoc, wordsList = self.getMatchRows(row)
-
-            print("-----------------------")
-            print(row)
-            print(wordsList)
-            for location in rowLoc:
-                print(location)
-
-            method1 = self.frequencyScore(rowLoc)
-            method2 = self.getRang()
-            print(method1)
-            print(len(method1))
-            rezult = dict()
-            for (key, value) in method1.items():
-                tmp = (value + method2[key]) / 2
-                rezult[key] = value
-
-            urlDict = dict()
-
-            for (key, value) in rezult.items():
-                urlList = self.cursor.execute("""SELECT url from URLList WHERE rowid = :value""",
-                                            {"value": key}).fetchall()
-                url = urlList[0][0]
-                urlDict[url] = value
-
-            return dict(sorted(urlDict.items(), key=lambda item: item[1]))
-
-    def sortedList(self, list, smallIsBetter=0):
-        return list.sort(reversed=True)
+        print(usedPageRank)
+        print(meanRank)
 
     def calculatePageRank(self, iterations=5):
         self.cursor.execute('DROP TABLE IF EXISTS pagerank')
@@ -199,25 +139,27 @@ class Searcher:
                 self.cursor.execute(f"SELECT * from linkBetweenUrl WHERE fk_tourl_id = {elem[0]}")
                 urlListTo = self.cursor.fetchall()
 
-                if urlListTo == []:
-                    prLink = 1 - pr
-                    self.cursor.execute(f"UPDATE pagerank SET score = {prLink} WHERE url_id = {elem[0]}")
+                if len(urlListTo) == 1 and urlListTo[0][1] is None:
+                    self.cursor.execute(f"UPDATE pagerank SET score = {pr} WHERE url_id = {elem[0]}")
                     self.dbConnection.commit()
                     continue
                 cList = list()
                 for urlTo in urlListTo:
-                    self.cursor.execute(f"SELECT count(fk_fromurl_id) from linkBetweenUrl WHERE fk_fromurl_id = '{urlTo[1]}'")
-                    c = self.cursor.fetchall()
-                    cList.append(c)
+                    # Подсчет количества ссылок на которые ссылается urlTo
+                    if urlTo[1] is not None:
+                        self.cursor.execute(f"SELECT count(fk_fromurl_id) from linkBetweenUrl WHERE fk_fromurl_id = '{urlTo[1]}'")
+                        c = self.cursor.fetchall()
+                        cList.append(c)
 
                 # Найти весь все ссылок
 
                 rangeList = list()
                 for elem2 in urlListTo:
-                    self.cursor.execute(f"SELECT score FROM pagerank WHERE url_id = {elem2[1]}"),
-                    rangeTmp = self.cursor.fetchall()
+                    if elem2[1] is not None:
+                        self.cursor.execute(f"SELECT score FROM pagerank WHERE url_id = {elem2[1]}"),
+                        rangeTmp = self.cursor.fetchall()
 
-                    rangeList.append(rangeTmp)
+                        rangeList.append(rangeTmp)
 
                 countPR = 0
 
@@ -227,46 +169,15 @@ class Searcher:
 
                 rangeLink = (1 - pr) + pr * countPR
 
-                self.cursor.execute(f"UPDATE pagerank SET score = {elem[0]} WHERE url_id = {rangeLink}")
+                self.cursor.execute(f"UPDATE pagerank SET score = {rangeLink} WHERE url_id = {elem[0]}")
                 self.dbConnection.commit()
 
         self.cursor.execute("SELECT url_id, score FROM pagerank")
-        dict = self.cursor.fetchall()
+        dictValues = self.cursor.fetchall()
 
-        return self.normalizePageRank(dict, smallIsBetter=0)
+        return self.normalizeScores(dict(dictValues), smallIsBetter=0)
 
-    def getRang(self):
-        """Получение ранга"""
-        self.cursor.execute("""SELECT url_id, score FROM pagerank """)
-        dict =self.cursor.fetchall()
-        return self.normalizePageRank(dict, smallIsBetter=0)
 
-    def getMax(self, list):
-        max = 0
-        for elem in list:
-            if elem[1] > max:
-                max = elem[1]
-
-        min = max
-        for elem in list:
-            if elem[1] < min:
-                min = elem[1]
-
-        return max, min
-
-    def normalizePageRank(self, listPageRanks, smallIsBetter=0):
-        """Процесс нормализации для PageRank"""
-        resultDict = dict()
-        vsmall = 0.00001
-        minscore, maxscore = self.getMax(listPageRanks)
-
-        for elem in listPageRanks:
-            if smallIsBetter:
-                resultDict[elem[0]] = float(elem[1]) / maxscore
-            else:
-                resultDict[elem[0]] = float(elem[1]) / minscore
-
-        return resultDict
 
 
 

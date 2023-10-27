@@ -44,7 +44,7 @@ class Crawler:
                         END;
                         $do$
                         """
-                self.cursor.execute(query, (word, word, isFiltered))
+                self.cursor.execute(query, (word.lower(), word.lower(), isFiltered))
             self.dbConnection.commit()
             for word_id, word in enumerate(clear_words):
                 if not word.isnumeric():
@@ -56,13 +56,13 @@ class Crawler:
                                        %s
                             )
                             """
-                    self.cursor.execute(query, (word, url, word_id))
+                    self.cursor.execute(query, (word.lower(), url, word_id))
                     query_linkword = ("insert into linkword(fk_wordid, fk_linkid) VALUES ("
                                       "(select rowid from wordlist where word = %s),"
                                       "(select lb.rowid from linkbetweenurl lb "
                                       "inner join urllist ul on ul.url = %s "
                                       "where lb.fk_tourl_id = ul.rowid))")
-                    self.cursor.execute(query_linkword, (word, url))
+                    self.cursor.execute(query_linkword, (word.lower(), url))
             self.dbConnection.commit()
 
     # 2. Получение текста страницы
@@ -184,6 +184,7 @@ class Crawler:
                     tempURL += urlList
                     for url in urlList:
                         if self.isIndexed(url):
+                            self.addLinkRef(p_url, url)
                             continue
                         else:
                             try:
